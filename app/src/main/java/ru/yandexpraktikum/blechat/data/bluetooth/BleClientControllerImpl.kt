@@ -2,6 +2,8 @@ package ru.yandexpraktikum.blechat.data.bluetooth
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
@@ -26,7 +28,7 @@ class BleClientControllerImpl @Inject constructor(
     private val bluetoothAdapter: BluetoothAdapter?,
     private val locationManager: LocationManager,
     private val viewModelScope: CoroutineScope,
-): BleClientController {
+) : BleClientController {
 
     private val bleScanner by lazy {
         bluetoothAdapter?.bluetoothLeScanner
@@ -58,7 +60,10 @@ class BleClientControllerImpl @Inject constructor(
 
     override fun updateLocationState() {
         try {
-            _isLocationEnabled.value = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) || locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            _isLocationEnabled.value =
+                locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) || locationManager.isProviderEnabled(
+                    LocationManager.NETWORK_PROVIDER
+                )
         } catch (e: Exception) {
             Log.e("BLE", "Failed to initialize Location state", e)
         }
@@ -145,8 +150,15 @@ class BleClientControllerImpl @Inject constructor(
         }
     }
 
-    override fun connectToDevice(device: ScannedBluetoothDevice): Boolean {
-        TODO()
+    private var currentGatt: BluetoothGatt? = null
+    override fun connectToDevice(device: ScannedBluetoothDevice):Boolean {
+        context.checkForConnectPermission {
+        val gattCallback = object : BluetoothGattCallback() {}
+        val bluetoothDevice = bluetoothAdapter?.getRemoteDevice(device.address)
+        currentGatt = bluetoothDevice?.connectGatt(context, false, gattCallback)
+
+    }
+        return currentGatt!=null
     }
 
     override suspend fun sendMessage(message: String, deviceAddress: String): Boolean {
