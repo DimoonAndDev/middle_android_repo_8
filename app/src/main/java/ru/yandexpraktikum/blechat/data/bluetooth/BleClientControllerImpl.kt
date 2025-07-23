@@ -27,6 +27,7 @@ import ru.yandexpraktikum.blechat.domain.model.ScannedBluetoothDevice
 import ru.yandexpraktikum.blechat.utils.checkForConnectPermission
 import ru.yandexpraktikum.blechat.utils.notifyCharUUID
 import ru.yandexpraktikum.blechat.utils.serviceUUID
+import ru.yandexpraktikum.blechat.utils.writeCharUUID
 import java.nio.charset.Charset
 import javax.inject.Inject
 
@@ -171,11 +172,15 @@ class BleClientControllerImpl @Inject constructor(
                         when (newState) {
                             BluetoothProfile.STATE_CONNECTED -> {
                                 context.checkForConnectPermission { gatt?.discoverServices() }
-                                updateDeviceConnectionState(device.address, true)
+                                updateDeviceConnectionState(device.address) { device ->
+                                    device.copy(isConnected = true)
+                                }
                             }
 
                             BluetoothProfile.STATE_DISCONNECTED -> {
-                                updateDeviceConnectionState(device.address, false)
+                                updateDeviceConnectionState(device.address) { device ->
+                                    device.copy(isConnected = false)
+                                }
                                 closeConnection()
                             }
                         }
@@ -194,6 +199,7 @@ class BleClientControllerImpl @Inject constructor(
                         }
                     }
                 }
+
                 @Deprecated("Deprecated in Java")
                 override fun onCharacteristicChanged(
                     gatt: BluetoothGatt,
@@ -202,7 +208,15 @@ class BleClientControllerImpl @Inject constructor(
                     super.onCharacteristicChanged(gatt, characteristic)
                     val value = String(characteristic.value, Charset.defaultCharset())
                     viewModelScope.launch {
-                        updateDeviceConnectionState(device.address, value)
+                        updateDeviceConnectionState(device.address) { device ->
+                            device.copy(
+                                messages = device.messages + Message(
+                                    value,
+                                    device.address,
+                                    false
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -214,25 +228,36 @@ class BleClientControllerImpl @Inject constructor(
         return currentGatt != null
     }
 
-    private fun updateDeviceConnectionState(address: String, isConnected: Boolean) {
+    private fun updateDeviceConnectionState(
+        address: String,
+        itCopySettings: (ScannedBluetoothDevice) -> ScannedBluetoothDevice
+    ) {
         _scannedDevices.update { devices ->
             devices.map {
-                if (it.address == address) it.copy(isConnected = isConnected) else it
-            }
-        }
-    }
-    private fun updateDeviceConnectionState(address: String, message: String) {
-        _scannedDevices.update { devices ->
-            devices.map {
-                if (it.address == address){
-                    it.copy(messages = it.messages + Message(message,it.address, false))}
-                else it
+                if (it.address == address) {
+                    itCopySettings(it)
+                } else it
             }
         }
     }
 
     override suspend fun sendMessage(message: String, deviceAddress: String): Boolean {
-        TODO()
+        val characteristic = currentGatt?.getService(serviceUUID)?.getCharacteristic(writeCharUUID)
+        if (characteristic == null) return false
+        else {
+            characteristic.setValue(message.toByteArray())
+            context.checkForConnectPermission { currentGatt?.writeCharacteristic(characteristic) }
+            updateDeviceConnectionState(deviceAddress) { device ->
+                device.copy(
+                    messages = device.messages + Message(
+                        text = message,
+                        senderAddress = bluetoothAdapter?.address ?: "",
+                        isFromLocalUser = true
+                    )
+                )
+            }
+            return true
+        }
     }
 
     override fun closeConnection() {
